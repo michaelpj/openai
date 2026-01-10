@@ -58,6 +58,9 @@ import OpenAI.V1.Batches (BatchID, BatchObject, CreateBatch)
 import OpenAI.V1.Chat.Completions (ChatCompletionObject, CreateChatCompletion)
 import OpenAI.V1.DeletionStatus (DeletionStatus)
 import OpenAI.V1.Embeddings (CreateEmbeddings, EmbeddingObject)
+import OpenAI.V1.Evals (CreateEval, EvalDeleteResponse, EvalID, EvalObject, ModifyEval)
+import OpenAI.V1.Evals.Runs (CreateEvalRun, EvalRunDeleteResponse, EvalRunID, EvalRunObject)
+import OpenAI.V1.Evals.Runs.OutputItems (OutputItemID, OutputItemObject, OutputItemStatus)
 import OpenAI.V1.Files (FileID, FileObject, UploadFile)
 import OpenAI.V1.Images.Edits (CreateImageEdit)
 import OpenAI.V1.Images.Generations (CreateImage)
@@ -136,6 +139,9 @@ import qualified OpenAI.V1.Batches as Batches
 import qualified OpenAI.V1.Chat.Completions as Chat.Completions
 import qualified OpenAI.V1.ChatKit as ChatKit
 import qualified OpenAI.V1.Embeddings as Embeddings
+import qualified OpenAI.V1.Evals as Evals
+import qualified OpenAI.V1.Evals.Runs as Evals.Runs
+import qualified OpenAI.V1.Evals.Runs.OutputItems as Evals.Runs.OutputItems
 import qualified OpenAI.V1.Files as Files
 import qualified OpenAI.V1.FineTuning.Jobs as FineTuning.Jobs
 import qualified OpenAI.V1.Images as Images
@@ -203,6 +209,14 @@ makeMethods clientEnv token organizationID projectID = Methods{..}
             :<|>  listResponseInputItems_
             )
       :<|>  createEmbeddings_
+      :<|>  (     createEval
+            :<|>  listEvals_
+            :<|>  retrieveEval
+            :<|>  modifyEval
+            :<|>  deleteEval
+            )
+      :<|>  evalRunsClient
+      :<|>  evalRunOutputItemsClient
       :<|>  (     createFineTuningJob
             :<|>  listFineTuningJobs_
             :<|>  listFineTuningEvents_
@@ -314,6 +328,33 @@ makeMethods clientEnv token organizationID projectID = Methods{..}
     createTranscription a = createTranscription_ (boundary, a)
     createTranslation a = createTranslation_ (boundary, a)
     createEmbeddings a = toVector (createEmbeddings_ a)
+    listEvals a b c d = toVector (listEvals_ a b c d)
+
+    -- Eval Runs: evalRunsClient :: EvalID -> (create :<|> list :<|> retrieve :<|> delete :<|> cancel)
+    createEvalRun evalId body =
+        let (create :<|> _ :<|> _ :<|> _ :<|> _) = evalRunsClient evalId
+        in create body
+    listEvalRuns evalId a b c d =
+        let (_ :<|> list :<|> _ :<|> _ :<|> _) = evalRunsClient evalId
+        in toVector (list a b c d)
+    retrieveEvalRun evalId runId =
+        let (_ :<|> _ :<|> retrieve :<|> _ :<|> _) = evalRunsClient evalId
+        in retrieve runId
+    deleteEvalRun evalId runId =
+        let (_ :<|> _ :<|> _ :<|> del :<|> _) = evalRunsClient evalId
+        in del runId
+    cancelEvalRun evalId runId =
+        let (_ :<|> _ :<|> _ :<|> _ :<|> cancel) = evalRunsClient evalId
+        in cancel runId
+
+    -- Eval Run Output Items: evalRunOutputItemsClient :: EvalID -> EvalRunID -> (list :<|> retrieve)
+    listEvalRunOutputItems evalId runId a b c d =
+        let (list :<|> _) = evalRunOutputItemsClient evalId runId
+        in toVector (list a b c d)
+    retrieveEvalRunOutputItem evalId runId outputItemId =
+        let (_ :<|> retrieve) = evalRunOutputItemsClient evalId runId
+        in retrieve outputItemId
+
     listFineTuningJobs a b = toVector (listFineTuningJobs_ a b)
     listFineTuningEvents a b c = toVector (listFineTuningEvents_ a b c)
     listFineTuningCheckpoints a b c =
@@ -543,6 +584,51 @@ data Methods = Methods
         :: CreateResponse
         -> (Either Text Responses.ResponseStreamEvent -> IO ())
         -> IO ()
+      -- Evals
+    , createEval :: CreateEval -> IO EvalObject
+    , listEvals
+        :: Maybe Text
+        -- ^ after
+        -> Maybe Natural
+        -- ^ limit
+        -> Maybe Text
+        -- ^ order
+        -> Maybe Text
+        -- ^ order_by
+        -> IO (Vector EvalObject)
+    , retrieveEval :: EvalID -> IO EvalObject
+    , modifyEval :: EvalID -> ModifyEval -> IO EvalObject
+    , deleteEval :: EvalID -> IO EvalDeleteResponse
+      -- Eval Runs
+    , createEvalRun :: EvalID -> CreateEvalRun -> IO EvalRunObject
+    , listEvalRuns
+        :: EvalID
+        -> Maybe Text
+        -- ^ after
+        -> Maybe Natural
+        -- ^ limit
+        -> Maybe Text
+        -- ^ order
+        -> Maybe Evals.Runs.RunStatus
+        -- ^ status
+        -> IO (Vector EvalRunObject)
+    , retrieveEvalRun :: EvalID -> EvalRunID -> IO EvalRunObject
+    , deleteEvalRun :: EvalID -> EvalRunID -> IO EvalRunDeleteResponse
+    , cancelEvalRun :: EvalID -> EvalRunID -> IO EvalRunObject
+      -- Eval Run Output Items
+    , listEvalRunOutputItems
+        :: EvalID
+        -> EvalRunID
+        -> Maybe Text
+        -- ^ after
+        -> Maybe Natural
+        -- ^ limit
+        -> Maybe Text
+        -- ^ order
+        -> Maybe OutputItemStatus
+        -- ^ status
+        -> IO (Vector OutputItemObject)
+    , retrieveEvalRunOutputItem :: EvalID -> EvalRunID -> OutputItemID -> IO OutputItemObject
     , createFineTuningJob :: CreateFineTuningJob -> IO JobObject
     , listFineTuningJobs
         :: Maybe Text
@@ -759,6 +845,9 @@ type API
         :<|>  ChatKit.API
         :<|>  Responses.API
         :<|>  Embeddings.API
+        :<|>  Evals.API
+        :<|>  Evals.Runs.API
+        :<|>  Evals.Runs.OutputItems.API
         :<|>  FineTuning.Jobs.API
         :<|>  Batches.API
         :<|>  Files.API

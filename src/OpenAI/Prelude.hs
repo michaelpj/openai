@@ -2,7 +2,10 @@ module OpenAI.Prelude
     ( -- * JSON
       aesonOptions
     , stripPrefix
+    , stripPrefixThen
+    , stripAnyPrefix
     , labelModifier
+    , camelToSnake
       -- * Multipart Form Data
     , input
     , renderIntegral
@@ -64,7 +67,9 @@ import Servant.API
     , QueryParam
     , ReqBody
     , Required
+    , StdMethod(..)
     , Strict
+    , Verb
     , (:<|>)(..)
     , (:>)
     )
@@ -101,6 +106,50 @@ stripPrefix prefix string = labelModifier suffix
     suffix = case List.stripPrefix prefix string of
         Nothing -> string
         Just x  -> x
+
+-- | Strip a prefix and apply a transformation to the result
+stripPrefixThen :: String -> (String -> String) -> String -> String
+stripPrefixThen prefix f string = case List.stripPrefix prefix string of
+    Nothing -> labelModifier string
+    Just x  -> f x
+
+-- | Strip the first matching prefix from a list, applying labelModifier to the result
+stripAnyPrefix :: [String] -> String -> String
+stripAnyPrefix prefixes string = labelModifier (go prefixes)
+  where
+    go [] = string
+    go (p:ps) = case List.stripPrefix p string of
+        Just suffix -> suffix
+        Nothing -> go ps
+
+-- | Convert CamelCase to snake_case, handling acronyms correctly
+--
+-- Examples:
+-- >>> camelToSnake "StringCheck"
+-- "string_check"
+-- >>> camelToSnake "LabelModel"
+-- "label_model"
+-- >>> camelToSnake "JSONL"
+-- "jsonl"
+-- >>> camelToSnake "FileID"
+-- "file_id"
+camelToSnake :: String -> String
+camelToSnake = map Char.toLower . insertUnderscores
+  where
+    insertUnderscores [] = []
+    insertUnderscores [c] = [c]
+    insertUnderscores (a:b:rest)
+        | needsUnderscore a b rest = a : '_' : insertUnderscores (b:rest)
+        | otherwise = a : insertUnderscores (b:rest)
+
+    needsUnderscore a b rest
+        -- lowercase -> uppercase: start of new word
+        = Char.isLower a && Char.isUpper b
+        -- end of acronym: uppercase followed by uppercase then lowercase
+        || Char.isUpper a && Char.isUpper b && startsWithLower rest
+
+    startsWithLower (c:_) = Char.isLower c
+    startsWithLower [] = False
 
 aesonOptions :: Options
 aesonOptions = Aeson.defaultOptions

@@ -63,6 +63,7 @@ data Purpose
     | Assistants_Output
     | Batch
     | Batch_Output
+    | Evals
     | Fine_Tune
     | Fine_Tune_Results
     | Vision
@@ -87,6 +88,7 @@ instance ToHttpApiData Purpose where
     toUrlPiece Assistants_Output = "assistants"
     toUrlPiece Batch = "batch"
     toUrlPiece Batch_Output = "batch_output"
+    toUrlPiece Evals = "evals"
     toUrlPiece Fine_Tune = "fine-tune"
     toUrlPiece Fine_Tune_Results = "fine-tune-results"
     toUrlPiece Vision = "vision"

@@ -48,6 +48,19 @@ import OpenAI.V1.VectorStores.FileBatches
     (CreateVectorStoreFileBatch(..), VectorStoreFilesBatchObject(..))
 import OpenAI.V1.VectorStores.Files
     (CreateVectorStoreFile(..), VectorStoreFileObject(..))
+import OpenAI.V1.Evals
+    ( CreateDataSourceConfig(..)
+    , CreateEval(..)
+    , EvalObject(..)
+    , TestingCriterion(..)
+    , _CreateEval
+    )
+import OpenAI.V1.Evals.Runs
+    ( EvalRunObject(..)
+    , JSONLSource(..)
+    , RunDataSource(..)
+    , _CreateEvalRun
+    )
 
 import qualified Control.Concurrent as Concurrent
 import qualified Data.IORef as IORef
@@ -60,6 +73,8 @@ import qualified OpenAI.V1.Files as Files
 import qualified OpenAI.V1.FineTuning.Jobs as Jobs
 import qualified OpenAI.V1.Images.ResponseFormat as ResponseFormat
 import qualified OpenAI.V1.Responses as Responses
+import qualified OpenAI.V1.Evals as Evals
+import qualified OpenAI.V1.Evals.Runs as Evals.Runs
 import qualified OpenAI.V1.Tool as Tool
 import qualified OpenAI.V1.ToolCall as ToolCall
 import qualified Servant.Client as Client
@@ -1100,6 +1115,220 @@ main = do
             Aeson.Success decoded ->
               HUnit.assertEqual "Round-trip mismatch" reasoningItem decoded
 
+  -- Evals JSON serialization tests
+  --
+  -- These tests verify that the JSON encoding/decoding round-trips correctly.
+  let evalsTestingCriterionSerializationTest =
+        HUnit.testCase "Evals - TestingCriterion serialization" do
+          -- Test StringCheck grader
+          let stringCheckGrader =
+                Grader_StringCheck
+                  { string_check_id = Nothing
+                  , string_check_grdr_id = Nothing
+                  , string_check_inactive_at = Nothing
+                  , string_check_name = "exact_match"
+                  , string_check_input = "{{sample.output_text}}"
+                  , string_check_reference = "{{item.expected}}"
+                  , string_check_operation = Evals.Eq
+                  }
+              encoded = Aeson.encode stringCheckGrader
+              expected :: Aeson.Value
+              expected =
+                Aeson.object
+                  [ "type" .= ("string_check" :: Text.Text)
+                  , "name" .= ("exact_match" :: Text.Text)
+                  , "input" .= ("{{sample.output_text}}" :: Text.Text)
+                  , "reference" .= ("{{item.expected}}" :: Text.Text)
+                  , "operation" .= ("eq" :: Text.Text)
+                  ]
+          case Aeson.decode encoded of
+            Nothing ->
+              HUnit.assertFailure "Failed to decode encoded StringCheck grader"
+            Just decodedValue ->
+              HUnit.assertEqual "StringCheck JSON mismatch" expected decodedValue
+          -- Round-trip test
+          case Aeson.eitherDecode encoded of
+            Left err ->
+              HUnit.assertFailure ("StringCheck round-trip decode failed: " <> err)
+            Right (decoded :: TestingCriterion) ->
+              HUnit.assertEqual "StringCheck round-trip mismatch" stringCheckGrader decoded
+
+  let evalsDataSourceConfigSerializationTest =
+        HUnit.testCase "Evals - CreateDataSourceConfig serialization" do
+          let customConfig =
+                CreateDataSourceConfig_Custom
+                  { create_custom_item_schema =
+                      Aeson.object
+                        [ "type" .= ("object" :: Text.Text)
+                        , "properties" .= Aeson.object
+                            [ "question" .= Aeson.object ["type" .= ("string" :: Text.Text)]
+                            , "expected" .= Aeson.object ["type" .= ("string" :: Text.Text)]
+                            ]
+                        ]
+                  , create_custom_include_sample_schema = Just True
+                  }
+              encoded = Aeson.encode customConfig
+          -- Round-trip test
+          case Aeson.eitherDecode encoded of
+            Left err ->
+              HUnit.assertFailure ("CreateDataSourceConfig round-trip decode failed: " <> err)
+            Right (decoded :: CreateDataSourceConfig) ->
+              HUnit.assertEqual "CreateDataSourceConfig round-trip mismatch" customConfig decoded
+
+  let evalsRunDataSourceSerializationTest =
+        HUnit.testCase "Evals - RunDataSource serialization" do
+          let jsonlSource =
+                RunDataSource_JSONL
+                  { jsonl_source = JSONLSource_FileContent
+                      { file_content_content =
+                          [ Aeson.object
+                              [ "question" .= ("What is 2+2?" :: Text.Text)
+                              , "expected" .= ("4" :: Text.Text)
+                              ]
+                          ]
+                      }
+                  }
+              encoded = Aeson.encode jsonlSource
+          -- Round-trip test
+          case Aeson.eitherDecode encoded of
+            Left err ->
+              HUnit.assertFailure ("RunDataSource round-trip decode failed: " <> err)
+            Right (decoded :: RunDataSource) ->
+              HUnit.assertEqual "RunDataSource round-trip mismatch" jsonlSource decoded
+
+  -- Evals integration tests
+  let evalsOperationsTest = do
+        HUnit.testCase "Eval operations" do
+          -- Create an eval with a string_check grader
+          EvalObject{ Evals.id = evalId } <-
+            createEval
+              _CreateEval
+                { data_source_config = CreateDataSourceConfig_Custom
+                    { create_custom_item_schema =
+                        Aeson.object
+                          [ "type" .= ("object" :: Text.Text)
+                          , "properties" .= Aeson.object
+                              [ "question" .= Aeson.object ["type" .= ("string" :: Text.Text)]
+                              , "expected" .= Aeson.object ["type" .= ("string" :: Text.Text)]
+                              ]
+                          , "required" .= (["question", "expected"] :: [Text.Text])
+                          ]
+                    , create_custom_include_sample_schema = Just True
+                    }
+                , testing_criteria =
+                    [ Grader_StringCheck
+                        { string_check_id = Nothing
+                        , string_check_grdr_id = Nothing
+                        , string_check_inactive_at = Nothing
+                        , string_check_name = "exact_match"
+                        , string_check_input = "{{sample.output_text}}"
+                        , string_check_reference = "{{item.expected}}"
+                        , string_check_operation = Evals.Eq
+                        }
+                    ]
+                , metadata = Nothing
+                , name = Just "haskell-openai-test-eval"
+                }
+
+          -- List evals
+          _ <- listEvals Nothing Nothing Nothing Nothing
+
+          -- Retrieve the eval
+          _ <- retrieveEval evalId
+
+          -- Modify the eval
+          _ <- modifyEval evalId Evals._ModifyEval
+            { Evals.metadata = Nothing
+            , Evals.name = Just "haskell-openai-test-eval-modified"
+            }
+
+          -- Delete the eval
+          _ <- deleteEval evalId
+
+          return ()
+
+  let evalsRunOperationsTest = do
+        HUnit.testCase "Eval run operations" do
+          -- Create an eval first
+          EvalObject{ Evals.id = evalId } <-
+            createEval
+              _CreateEval
+                { data_source_config = CreateDataSourceConfig_Custom
+                    { create_custom_item_schema =
+                        Aeson.object
+                          [ "type" .= ("object" :: Text.Text)
+                          , "properties" .= Aeson.object
+                              [ "question" .= Aeson.object ["type" .= ("string" :: Text.Text)]
+                              , "expected" .= Aeson.object ["type" .= ("string" :: Text.Text)]
+                              ]
+                          , "required" .= (["question", "expected"] :: [Text.Text])
+                          ]
+                    , create_custom_include_sample_schema = Just True
+                    }
+                , testing_criteria =
+                    [ Grader_StringCheck
+                        { string_check_id = Nothing
+                        , string_check_grdr_id = Nothing
+                        , string_check_inactive_at = Nothing
+                        , string_check_name = "exact_match"
+                        , string_check_input = "{{sample.output_text}}"
+                        , string_check_reference = "{{item.expected}}"
+                        , string_check_operation = Evals.Eq
+                        }
+                    ]
+                , metadata = Nothing
+                , name = Just "haskell-openai-test-eval-for-run"
+                }
+
+          -- Create an eval run with inline JSONL data
+          -- Note: Each row must have an "item" property containing the data
+          EvalRunObject{ Evals.Runs.id = runId } <-
+            createEvalRun evalId
+              _CreateEvalRun
+                { Evals.Runs.data_source = RunDataSource_JSONL
+                    { jsonl_source = JSONLSource_FileContent
+                        { file_content_content =
+                            [ Aeson.object
+                                [ "item" .= Aeson.object
+                                    [ "question" .= ("What is 2+2?" :: Text.Text)
+                                    , "expected" .= ("4" :: Text.Text)
+                                    ]
+                                , "sample" .= Aeson.object
+                                    [ "output_text" .= ("4" :: Text.Text)
+                                    , "model" .= ("gpt-4o-mini" :: Text.Text)
+                                    , "choices" .= ([] :: [Aeson.Value])
+                                    ]
+                                ]
+                            ]
+                        }
+                    }
+                , Evals.Runs.metadata = Nothing
+                , Evals.Runs.name = Just "haskell-openai-test-run"
+                }
+
+          -- List runs for this eval
+          _ <- listEvalRuns evalId Nothing Nothing Nothing Nothing
+
+          -- Retrieve the run
+          _ <- retrieveEvalRun evalId runId
+
+          -- Cancel the run (if still in progress) - may fail if already completed
+          _ <- (cancelEvalRun evalId runId >> pure ())
+              `catch` \(_ :: SomeException) -> pure ()
+
+          -- List output items (may be empty if run was cancelled quickly)
+          _ <- listEvalRunOutputItems evalId runId Nothing Nothing Nothing Nothing
+              `catch` \(_ :: SomeException) -> pure []
+
+          -- Delete the run - may fail if already deleted or in wrong state
+          _ <- (deleteEvalRun evalId runId >> pure ())
+              `catch` \(_ :: SomeException) -> pure ()
+
+          -- Clean up: delete the eval
+          _ <- deleteEval evalId
+
+          return ()
+
   let tests =
           speechTests
             <> [ transcriptionTest,
@@ -1127,7 +1356,12 @@ main = do
                assistantsWithCodeInterpreterTest,
                messagesTest,
                threadsRunsStepsTest,
-               vectorStoreFilesTest
+               vectorStoreFilesTest,
+               evalsTestingCriterionSerializationTest,
+               evalsDataSourceConfigSerializationTest,
+               evalsRunDataSourceSerializationTest,
+               evalsOperationsTest,
+               evalsRunOperationsTest
              ]
 
   Tasty.defaultMain (Tasty.testGroup "Tests" tests)

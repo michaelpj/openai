@@ -58,6 +58,9 @@ library
                         OpenAI.V1.DeletionStatus
                         OpenAI.V1.Embeddings
                         OpenAI.V1.Error
+                        OpenAI.V1.Evals
+                        OpenAI.V1.Evals.Runs
+                        OpenAI.V1.Evals.Runs.OutputItems
                         OpenAI.V1.Files
                         OpenAI.V1.FineTuning.Jobs
                         OpenAI.V1.Images
